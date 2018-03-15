@@ -22,7 +22,10 @@ var offerOptions = {
 
 var startTime;
 
-leftVideo.onplay = function() {
+function maybeCreateStream() {
+  if (stream) {
+    return;
+  }
   if (leftVideo.captureStream) {
     stream = leftVideo.captureStream();
     console.log('Captured stream from leftVideo with captureStream',
@@ -36,7 +39,15 @@ leftVideo.onplay = function() {
   } else {
     trace('captureStream() not supported');
   }
-};
+}
+
+// Video tag capture must be set up after video tracks are enumerated.
+leftVideo.oncanplay = maybeCreateStream;
+if (leftVideo.readyState >= 3) {  // HAVE_FUTURE_DATA
+  // Video is already ready to play, call maybeCreateStream in case oncanplay
+  // fired before we registered the event handler.
+  maybeCreateStream();
+}
 
 leftVideo.play();
 
@@ -85,9 +96,16 @@ function call() {
   pc2.oniceconnectionstatechange = function(e) {
     onIceStateChange(pc2, e);
   };
-  pc2.onaddstream = gotRemoteStream;
+  pc2.ontrack = gotRemoteStream;
 
-  pc1.addStream(stream);
+  stream.getTracks().forEach(
+    function(track) {
+      pc1.addTrack(
+        track,
+        stream
+      );
+    }
+  );
   trace('Added local stream to pc1');
 
   trace('pc1 createOffer start');
@@ -129,8 +147,10 @@ function onSetSessionDescriptionError(error) {
 }
 
 function gotRemoteStream(event) {
-  rightVideo.srcObject = event.stream;
-  console.log('pc2 received remote stream', event);
+  if (rightVideo.srcObject !== event.streams[0]) {
+    rightVideo.srcObject = event.streams[0];
+    console.log('pc2 received remote stream', event);
+  }
 }
 
 function onCreateAnswerSuccess(desc) {
@@ -146,17 +166,17 @@ function onCreateAnswerSuccess(desc) {
 }
 
 function onIceCandidate(pc, event) {
-  if (event.candidate) {
-    getOtherPc(pc).addIceCandidate(new RTCIceCandidate(event.candidate),
-      function() {
-        onAddIceCandidateSuccess(pc);
-      },
-      function(err) {
-        onAddIceCandidateError(pc, err);
-      }
-      );
-    trace(getName(pc) + ' ICE candidate: \n' + event.candidate.candidate);
-  }
+  getOtherPc(pc).addIceCandidate(event.candidate)
+  .then(
+    function() {
+      onAddIceCandidateSuccess(pc);
+    },
+    function(err) {
+      onAddIceCandidateError(pc, err);
+    }
+  );
+  trace(getName(pc) + ' ICE candidate: \n' + (event.candidate ?
+      event.candidate.candidate : '(null)'));
 }
 
 function onAddIceCandidateSuccess(pc) {
